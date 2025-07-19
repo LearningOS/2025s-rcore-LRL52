@@ -14,7 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
-use crate::config::MAX_APP_NUM;
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
 use lazy_static::*;
@@ -37,6 +37,8 @@ pub struct TaskManager {
     num_app: usize,
     /// use inner value to get mutable access
     inner: UPSafeCell<TaskManagerInner>,
+    /// syscall count for each task
+    syscall_count: UPSafeCell<[[isize; MAX_SYSCALL_NUM]; MAX_APP_NUM]>,
 }
 
 /// Inner of Task Manager
@@ -67,6 +69,9 @@ lazy_static! {
                     current_task: 0,
                 })
             },
+            syscall_count: unsafe {
+                UPSafeCell::new([[0; MAX_SYSCALL_NUM]; MAX_APP_NUM])
+            }
         }
     };
 }
@@ -135,6 +140,26 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
+    /// Increase syscall count for current task.
+    fn inc_syscall_count(&self, syscall_id: usize) {
+        let current = self.inner.exclusive_access().current_task;
+        let mut syscall_count = self.syscall_count.exclusive_access();
+        if syscall_id <= MAX_SYSCALL_NUM {
+            syscall_count[current][syscall_id] += 1;
+        }
+    }
+
+    /// Get syscall count for current task.
+    fn get_syscall_count(&self, syscall_id: usize) -> isize {
+        let current = self.inner.exclusive_access().current_task;
+        let syscall_count = self.syscall_count.exclusive_access();
+        if syscall_id <= MAX_SYSCALL_NUM {
+            syscall_count[current][syscall_id]
+        } else {
+            -1 // Invalid syscall_id
+        }
+    }
 }
 
 /// Run the first task in task list.
@@ -168,4 +193,14 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// increase syscall count for current task
+pub fn inc_syscall_count(syscall_id: usize) {
+    TASK_MANAGER.inc_syscall_count(syscall_id);
+}
+
+/// Get syscall count for current task.
+pub fn get_syscall_count(syscall_id: usize) -> isize {
+    TASK_MANAGER.get_syscall_count(syscall_id)
 }
