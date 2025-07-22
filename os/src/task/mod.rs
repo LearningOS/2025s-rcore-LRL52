@@ -14,6 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::{MAX_APP_NUM, MAX_SYSCALL_NUM};
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -41,11 +42,14 @@ pub struct TaskManager {
 }
 
 /// The task manager inner in 'UPSafeCell'
+#[allow(unused)]
 struct TaskManagerInner {
     /// task list
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    /// syscall count for each task
+    syscall_count: [[isize; MAX_SYSCALL_NUM]; MAX_APP_NUM],
 }
 
 lazy_static! {
@@ -58,15 +62,21 @@ lazy_static! {
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
         }
-        TaskManager {
+        let ret = TaskManager {
             num_app,
             inner: unsafe {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_count: [[0; MAX_SYSCALL_NUM]; MAX_APP_NUM],
                 })
             },
-        }
+        };
+        let inner = ret.inner.exclusive_access();
+        let ptr = &inner.syscall_count as *const _ as usize;
+        println!("syscall_count ptr = {:#x} num_app ptr = {:#x}", ptr, &num_app as *const _ as usize);
+        drop(inner);
+        ret
     };
 }
 
@@ -77,6 +87,8 @@ impl TaskManager {
     /// But in ch4, we load apps statically, so the first task is a real app.
     fn run_first_task(&self) -> ! {
         let mut inner = self.inner.exclusive_access();
+        let ptr = &inner.syscall_count as *const _ as usize;
+        println!("syscall_count ptr = {:#x}, size = {:#x}", ptr, core::mem::size_of_val(&inner.syscall_count));
         let next_task = &mut inner.tasks[0];
         next_task.task_status = TaskStatus::Running;
         let next_task_cx_ptr = &next_task.task_cx as *const TaskContext;
