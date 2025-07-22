@@ -3,6 +3,7 @@
 BUG 描述：
 在 TaskManagerInner 中添加了 `syscall_count: [[isize; MAX_SYSCALL_NUM]; MAX_APP_NUM]` 字段，并通过 lazy_static! 宏一起初始化，
 ```rust
+lazy_static! {
 pub static ref TASK_MANAGER: TaskManager = {
         println!("init TASK_MANAGER");
         let num_app = get_num_app();
@@ -21,6 +22,7 @@ pub static ref TASK_MANAGER: TaskManager = {
                 })
             },
         }
+    };
 }
 ```
 当编译**开启 debug 选项**时，启动 rCore 会出现诡异卡死：
@@ -76,3 +78,30 @@ lazy_static! 宏在初始化时 `[[0; MAX_SYSCALL_NUM]; MAX_APP_NUM]` 被临时�
 GDB 复现：
 
 ![image-20250722141415154](./assets/image-20250722141415154.png)
+
+补充：
+```rust
+lazy_static! {
+    /// a `TaskManager` global instance through lazy_static!
+    pub static ref TASK_MANAGER: TaskManager = {
+        println!("init TASK_MANAGER");
+        let num_app = get_num_app();
+        println!("num_app = {}", num_app);
+        let mut tasks: Vec<TaskControlBlock> = Vec::new();
+        for i in 0..num_app {
+            tasks.push(TaskControlBlock::new(get_app_data(i), i));
+        }
+        TaskManager {
+            num_app,
+            inner: unsafe {
+                UPSafeCell::new(TaskManagerInner {
+                    tasks,
+                    current_task: 0,
+                    syscall_count: Box::new([[0; MAX_SYSCALL_NUM]; MAX_APP_NUM]), // ❌
+                })
+            },
+        }
+    };
+}
+```
+以上也是错误写法，这也会在栈上创建临时数组，再 move 到堆上
