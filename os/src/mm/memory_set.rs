@@ -35,8 +35,10 @@ lazy_static! {
 }
 /// address space
 pub struct MemorySet {
-    page_table: PageTable,
-    areas: Vec<MapArea>,
+    /// page table for this address space
+    pub page_table: PageTable,
+    /// collection of contiguous mapped areas
+    pub areas: Vec<MapArea>,
 }
 
 impl MemorySet {
@@ -63,6 +65,28 @@ impl MemorySet {
             None,
         );
     }
+
+    /// Remove a framed area
+    pub fn remove_framed_area(
+        &mut self,
+        start_va: VirtAddr,
+        end_va: VirtAddr,
+    ) -> Option<MapArea> {
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        if let Some(index) = self
+            .areas
+            .iter()
+            .position(|area| area.vpn_range.get_start() == start_vpn && area.vpn_range.get_end() == end_vpn)
+        {
+            let mut area = self.areas.remove(index);
+            area.unmap(&mut self.page_table);
+            Some(area)
+        } else {
+            None
+        }
+    }
+
     fn push(&mut self, mut map_area: MapArea, data: Option<&[u8]>) {
         map_area.map(&mut self.page_table);
         if let Some(data) = data {
@@ -91,6 +115,7 @@ impl MemorySet {
             ".bss [{:#x}, {:#x})",
             sbss_with_stack as usize, ebss as usize
         );
+        info!("physical memory [{:#x}, {:#x})", ekernel as usize, MEMORY_END);
         info!("mapping .text section");
         memory_set.push(
             MapArea::new(
@@ -265,7 +290,7 @@ impl MemorySet {
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
-    vpn_range: VPNRange,
+    pub vpn_range: VPNRange,
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     map_type: MapType,
     map_perm: MapPermission,

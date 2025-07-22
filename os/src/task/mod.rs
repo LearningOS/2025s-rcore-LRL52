@@ -14,6 +14,7 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::{MAX_SYSCALL_NUM};
 use crate::loader::{get_app_data, get_num_app};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
@@ -46,6 +47,8 @@ struct TaskManagerInner {
     tasks: Vec<TaskControlBlock>,
     /// id of current `Running` task
     current_task: usize,
+    /// syscall count for each task
+    syscall_count: Vec<Vec<isize>>,
 }
 
 lazy_static! {
@@ -58,12 +61,19 @@ lazy_static! {
         for i in 0..num_app {
             tasks.push(TaskControlBlock::new(get_app_data(i), i));
         }
+        let mut syscall_count = Vec::new();
+        for _ in 0..num_app {
+            let mut v = Vec::new();
+            v.resize(MAX_SYSCALL_NUM + 1, 0);
+            syscall_count.push(v);
+        }
         TaskManager {
             num_app,
             inner: unsafe {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    syscall_count,
                 })
             },
         }
@@ -126,6 +136,19 @@ impl TaskManager {
         inner.tasks[inner.current_task].get_trap_cx()
     }
 
+    /// Get the current 'Running' task's task control block.
+    fn get_current_tcb(& self) -> &'static mut TaskControlBlock {
+        let mut inner = self.inner.exclusive_access();
+        let current_task = inner.current_task;
+        let tcb = &mut inner.tasks[current_task];
+        unsafe {
+            // SAFETY: `inner` is an `UPSafeCell`, so we can safely get a mutable reference
+            // to the current task's TCB.
+            &mut *(tcb as *mut TaskControlBlock)
+            // core::mem::transmute::<&mut TaskControlBlock, &'static mut TaskControlBlock>(tcb)
+        }
+    }
+
     /// Change the current 'Running' task's program break
     pub fn change_current_program_brk(&self, size: i32) -> Option<usize> {
         let mut inner = self.inner.exclusive_access();
@@ -151,6 +174,28 @@ impl TaskManager {
             // go back to user mode
         } else {
             panic!("All applications completed!");
+        }
+    }
+
+    /// Increase syscall count for current task.
+    fn inc_syscall_count(&self, syscall_id: usize) {
+        let mut inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let syscall_count = &mut inner.syscall_count;
+        if syscall_id <= MAX_SYSCALL_NUM {
+            syscall_count[current][syscall_id] += 1;
+        }
+    }
+
+    /// Get syscall count for current task.
+    fn get_syscall_count(&self, syscall_id: usize) -> isize {
+        let inner = self.inner.exclusive_access();
+        let current = inner.current_task;
+        let syscall_count = &inner.syscall_count;
+        if syscall_id <= MAX_SYSCALL_NUM {
+            syscall_count[current][syscall_id]
+        } else {
+            -1 // Invalid syscall_id
         }
     }
 }
@@ -198,7 +243,22 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
     TASK_MANAGER.get_current_trap_cx()
 }
 
+/// Get the current 'Running' task's task control block.
+pub fn current_tcb() -> &'static mut TaskControlBlock {
+    TASK_MANAGER.get_current_tcb()
+}
+
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// increase syscall count for current task
+pub fn inc_syscall_count(syscall_id: usize) {
+    TASK_MANAGER.inc_syscall_count(syscall_id);
+}
+
+/// Get syscall count for current task.
+pub fn get_syscall_count(syscall_id: usize) -> isize {
+    TASK_MANAGER.get_syscall_count(syscall_id)
 }

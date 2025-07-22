@@ -113,6 +113,15 @@ impl VirtAddr {
     pub fn aligned(&self) -> bool {
         self.page_offset() == 0
     }
+
+    /// Check if the virtual address is valid
+    /// 在启用 SV39 分页模式下，只有低 39 位是真正有意义的。SV39 分页模式规定 64 位虚拟地址的 
+    /// 这 25 位必须和第 38 位相同，否则 MMU 会直接认定它是一个 不合法的虚拟地址。也就是说，
+    /// 所有 2^{64} 个虚拟地址中，只有最低的 256GiB（当第 38 位为 0 时）以及最高的（当第 38 
+    /// 位为 1 时）是合法的虚拟地址。
+    pub fn is_valid(addr: usize) -> bool {
+        addr <= 0x3F_FF_FF_FF_FF_usize || addr >= 0xFF_FF_FF_C0_00_00_00_00_usize
+    }
 }
 impl From<VirtAddr> for VirtPageNum {
     fn from(v: VirtAddr) -> Self {
@@ -204,7 +213,7 @@ impl StepByOne for VirtPageNum {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 /// a simple range structure for type T
 pub struct SimpleRange<T>
 where
@@ -226,6 +235,9 @@ where
     }
     pub fn get_end(&self) -> T {
         self.r
+    }
+    pub fn has_intersection(&self, other: &Self) -> bool {
+        !(self.r <= other.l || self.l >= other.r)
     }
 }
 impl<T> IntoIterator for SimpleRange<T>
