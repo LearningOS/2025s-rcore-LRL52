@@ -28,6 +28,7 @@ use riscv::register::{
 };
 
 global_asm!(include_str!("trap.S"));
+global_asm!(include_str!("kerneltrap.S"));
 
 /// Initialize trap handling
 pub fn init() {
@@ -35,8 +36,13 @@ pub fn init() {
 }
 
 fn set_kernel_trap_entry() {
+    extern "C" {
+        /// This function is defined in `kerneltrap.S` and
+        /// the address is aligned to 4 bytes
+        fn _trap_from_kernel();
+    }
     unsafe {
-        stvec::write(trap_from_kernel as usize, TrapMode::Direct);
+        stvec::write(_trap_from_kernel as usize, TrapMode::Direct);
     }
 }
 
