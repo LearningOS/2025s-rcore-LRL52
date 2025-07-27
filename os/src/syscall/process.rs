@@ -6,7 +6,7 @@ use crate::{
     fs::{open_file, OpenFlags},
     mm::{translated_byte_buffer, translated_refmut, translated_str, MapPermission, VPNRange, VirtAddr, VirtPageNum, FRAME_ALLOCATOR},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next, suspend_current_and_run_next
+        add_task, current_task, current_user_token, exit_current_and_run_next, suspend_current_and_run_next, Priority, TaskControlBlock
     }, timer::get_time_us,
 };
 
@@ -204,19 +204,41 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_spawn(path: *const u8) -> isize {
+    trace!("kernel:pid[{}] sys_spawn", current_task().unwrap().pid.0);
+    let current_task = current_task().unwrap();
+    let token = current_user_token();
+    let path = translated_str(token, path);
+    let inode = open_file(&path, OpenFlags::RDONLY);
+    if inode.is_none() {
+        trace!("kernel: sys_spawn failed, app not found: {}", path);
+        return -1;
+    }
+    let elf_data = inode.unwrap().read_all();
+    let new_task = Arc::new(TaskControlBlock::new(&elf_data));
+
+    // set the parent of the new task to the current task
+    let mut parent_inner = current_task.inner_exclusive_access();
+    parent_inner.children.push(new_task.clone());
+    let mut child_inner = new_task.inner_exclusive_access();
+    child_inner.parent = Some(Arc::downgrade(&current_task));
+    drop(child_inner); // 提前释放 child_inner，因为 add_task 也需要获取可变引用
+
+    // add the new task to the scheduler
+    add_task(new_task.clone());
+    
+    new_task.pid.0 as isize
 }
 
 // YOUR JOB: Set task priority.
-pub fn sys_set_priority(_prio: isize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_set_priority(prio: isize) -> isize {
+    trace!("kernel:pid[{}] sys_set_priority", current_task().unwrap().pid.0);
+    if prio < 2 {
+        trace!("kernel: sys_set_priority failed, invalid priority: {}", prio);
+        return -1;
+    }
+    let current_task = current_task().unwrap();
+    let mut inner = current_task.inner_exclusive_access();
+    inner.priority = Priority(prio as u64);
+    prio
 }
