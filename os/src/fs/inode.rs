@@ -4,14 +4,16 @@
 //!
 //! `UPSafeCell<OSInodeInner>` -> `OSInode`: for static `ROOT_INODE`,we
 //! need to wrap `OSInodeInner` into `UPSafeCell`
+use core::any::Any;
+
 use super::File;
 use crate::drivers::BLOCK_DEVICE;
 use crate::mm::UserBuffer;
 use crate::sync::UPSafeCell;
-use alloc::sync::Arc;
+use alloc::{string::String, sync::Arc};
 use alloc::vec::Vec;
 use bitflags::*;
-use easy_fs::{EasyFileSystem, Inode};
+use easy_fs::{EasyFileSystem, Inode, Stat};
 use lazy_static::*;
 
 /// inode in memory
@@ -53,6 +55,11 @@ impl OSInode {
         }
         v
     }
+    // Increase link count of current inode
+    // pub fn increase_link_count(&self) {
+    //     let inner = self.inner.exclusive_access();
+    //     inner.inode.increase_link_count();
+    // }
 }
 
 lazy_static! {
@@ -125,6 +132,23 @@ pub fn open_file(name: &str, flags: OpenFlags) -> Option<Arc<OSInode>> {
     }
 }
 
+/// Get the stat of an inode
+pub fn fstat(inode: &OSInode) -> Stat {
+    let inner = inode.inner.exclusive_access();
+    inner.inode.stat()
+}
+
+/// Create a new file as a link to the same inode as old
+pub fn linkat(ip: Arc<OSInode>, new_name: String) -> isize {
+    let inner = ip.inner.exclusive_access();
+    ROOT_INODE.linkat(&new_name, inner.inode.clone())
+}
+
+/// Remove a link by name
+pub fn unlinkat(name: String) -> isize {
+    ROOT_INODE.unlinkat(&name)
+}
+
 impl File for OSInode {
     fn readable(&self) -> bool {
         self.readable
@@ -155,5 +179,8 @@ impl File for OSInode {
             total_write_size += write_size;
         }
         total_write_size
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
